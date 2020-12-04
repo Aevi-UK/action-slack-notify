@@ -11,18 +11,19 @@ import (
 
 const (
 	EnvSlackWebhook   = "SLACK_WEBHOOK"
-	EnvSlackIcon      = "SLACK_ICON"
-	EnvSlackIconEmoji = "SLACK_ICON_EMOJI"
 	EnvSlackChannel   = "SLACK_CHANNEL"
 	EnvSlackTitle     = "SLACK_TITLE"
 	EnvSlackMessage   = "SLACK_MESSAGE"
 	EnvSlackColor     = "SLACK_COLOR"
-	EnvSlackUserName  = "SLACK_USERNAME"
 	EnvSlackFooter    = "SLACK_FOOTER"
 	EnvGithubActor    = "GITHUB_ACTOR"
-	EnvSiteName       = "SITE_NAME"
-	EnvHostName       = "HOST_NAME"
-	EnvMinimal        = "MSG_MINIMAL"
+	EnvVariants       = "VARIANTS"
+	EnvEnvironments   = "ENVIRONMENTS"
+	EnvChangeLogUrl   = "CHANGELOG_URL"
+	EnvReleaseUrl     = "RELEASE_URL"
+	EnvSlackPretext   = "SLACK_PRETEXT"
+	EnvVersionName    = "VERSION_NAME"
+	EnvBaseUrl        = "BASE_URL"
 )
 
 type Webhook struct {
@@ -44,6 +45,7 @@ type Attachment struct {
 	AuthorIcon string  `json:"author_icon,omitempty"`
 	Footer     string  `json:"footer,omitempty"`
 	Fields     []Field `json:"fields,omitempty"`
+	Actions    []Action `json:"actions,omitempty"`
 }
 
 type Field struct {
@@ -52,129 +54,121 @@ type Field struct {
 	Short bool   `json:"short,omitempty"`
 }
 
+type Action struct {
+	Type string `json:"type,omitempty"`
+	Text string `json:"text,omitempty"`
+	Url  string `json:"url,omitempty"`
+}
+
 func main() {
 	endpoint := os.Getenv(EnvSlackWebhook)
 	if endpoint == "" {
 		fmt.Fprintln(os.Stderr, "URL is required")
 		os.Exit(1)
 	}
-	text := os.Getenv(EnvSlackMessage)
-	if text == "" {
-		fmt.Fprintln(os.Stderr, "Message is required")
-		os.Exit(1)
+	
+	ref := os.Getenv("GITHUB_REF")
+	refStart := 10
+	isTag := true
+	if strings.Contains(ref, "heads") {
+		refStart = 11	
+		isTag = false
 	}
-	if strings.HasPrefix(os.Getenv("GITHUB_WORKFLOW"), ".github") {
-		os.Setenv("GITHUB_WORKFLOW", "Link to action run")
-	}
+	refShort := ref[refStart:len(ref)]
 
-	minimal := os.Getenv(EnvMinimal)
 	fields := []Field{}
-	if minimal == "true" {
-		mainFields := []Field{
-			{
-				Title: os.Getenv(EnvSlackTitle),
-				Value: envOr(EnvSlackMessage, "EOM"),
-				Short: false,
-			},
+	
+	version := os.Getenv(EnvVersionName)
+	if version == "" && isTag {
+		version = refShort	
+	}
+	if version != "" {
+		versionfield := Field{
+			Title: "Version",
+			Value: version,
+			Short: true,
 		}
-		fields = append(mainFields, fields...)
-	} else if minimal != "" {
-		requiredFields := strings.Split(minimal, ",")
-		mainFields := []Field{
-			{
-				Title: os.Getenv(EnvSlackTitle),
-				Value: envOr(EnvSlackMessage, "EOM"),
-				Short: false,
-			},
+		fields = append(fields, versionfield)
+	}
+	
+	variants := os.Getenv(EnvVariants)
+	if variants != "" {
+		variantfield := Field{
+			Title: "Variants",
+			Value: variants,
+			Short: true,
 		}
-		for _,requiredField := range requiredFields {
-			switch strings.ToLower(requiredField) {
-			case "ref":
-				field := []Field{
-					{
-						Title: "Ref",
-						Value: os.Getenv("GITHUB_REF"),
-						Short: true,
-					},
-				}
-				mainFields = append(field, mainFields...)
-			case "event":
-				field := []Field{
-					{
-						Title: "Event",
-						Value: os.Getenv("GITHUB_EVENT_NAME"),
-						Short: true,
-					},
-				}
-				mainFields = append(field, mainFields...)
-			case "actions url":
-				field := []Field{
-					{
-						Title: "Actions URL",
-						Value: "<https://github.com/" + os.Getenv("GITHUB_REPOSITORY") + "/commit/" + os.Getenv("GITHUB_SHA") + "/checks|" + os.Getenv("GITHUB_WORKFLOW") + ">",
-						Short: false,
-					},
-				}
-				mainFields = append(field, mainFields...)
-			}
+		fields = append(fields, variantfield)
+	}
+	
+	environments := os.Getenv(EnvEnvironments)
+	if environments != "" {
+		envfield := Field{
+			Title: "Environments",
+			Value: environments,
+			Short: true,
 		}
-		fields = append(mainFields, fields...)
-	} else {
-		mainFields := []Field{
-			{
-				Title: "Ref",
-				Value: os.Getenv("GITHUB_REF"),
-				Short: true,
-			}, {
-				Title: "Event",
-				Value: os.Getenv("GITHUB_EVENT_NAME"),
-				Short: true,
-			},
-			{
-				Title: "Actions URL",
-				Value: "<https://github.com/" + os.Getenv("GITHUB_REPOSITORY") + "/commit/" + os.Getenv("GITHUB_SHA") + "/checks|" + os.Getenv("GITHUB_WORKFLOW") + ">",
-				Short: false,
-			},
-			{
-				Title: os.Getenv(EnvSlackTitle),
-				Value: envOr(EnvSlackMessage, "EOM"),
-				Short: false,
-			},
+		fields = append(fields, envfield)
+	}
+	
+	if !isTag {
+		builtFromField := Field{
+			Title: "Built from",
+			Value: refShort,
+			Short: true,
 		}
-		fields = append(mainFields, fields...)
+		fields = append(fields, builtFromField)
+	}
+	
+	actionedByField := Field{
+		Title: "Actioned by",
+		Value: envOr(EnvGithubActor, "Unknown"),
+		Short: true,
+	}
+	fields = append(fields, actionedByField)	
+	
+	baseUrl := os.Getenv(EnvBaseUrl)
+	if baseUrl != "" {
+		baseUrlField := Field{
+			Title: "Base URL",
+			Value: baseUrl,
+			Short: true,
+		}
+		fields = append(fields, baseUrlField)
+	}
+	
+	actions := []Action{}
+	
+	changeLogUrl := os.Getenv(EnvChangeLogUrl)
+	if changeLogUrl != "" {
+		changeLogUrlAction := Action{
+			Type: "button",
+			Text: "Changelog",
+			Url: changeLogUrl,
+		}
+		actions = append(actions, changeLogUrlAction)
 	}
 
-	hostName := os.Getenv(EnvHostName)
-	if hostName != "" {
-		newfields := []Field{
-			{
-				Title: os.Getenv("SITE_TITLE"),
-				Value: os.Getenv(EnvSiteName),
-				Short: true,
-			},
-			{
-				Title: os.Getenv("HOST_TITLE"),
-				Value: os.Getenv(EnvHostName),
-				Short: true,
-			},
+	releaseUrl := os.Getenv(EnvReleaseUrl)
+	if releaseUrl != "" {
+		releaseUrlAction := Action{
+			Type: "button",
+			Text: "View release",
+			Url: releaseUrl,
 		}
-		fields = append(newfields, fields...)
+		actions = append(actions, releaseUrlAction)
 	}
 
 	msg := Webhook{
-		UserName:  os.Getenv(EnvSlackUserName),
-		IconURL:   os.Getenv(EnvSlackIcon),
-		IconEmoji: os.Getenv(EnvSlackIconEmoji),
 		Channel:   os.Getenv(EnvSlackChannel),
 		Attachments: []Attachment{
 			{
 				Fallback:   envOr(EnvSlackMessage, "GITHUB_ACTION="+os.Getenv("GITHUB_ACTION")+" \n GITHUB_ACTOR="+os.Getenv("GITHUB_ACTOR")+" \n GITHUB_EVENT_NAME="+os.Getenv("GITHUB_EVENT_NAME")+" \n GITHUB_REF="+os.Getenv("GITHUB_REF")+" \n GITHUB_REPOSITORY="+os.Getenv("GITHUB_REPOSITORY")+" \n GITHUB_WORKFLOW="+os.Getenv("GITHUB_WORKFLOW")),
 				Color:      envOr(EnvSlackColor, "good"),
-				AuthorName: envOr(EnvGithubActor, ""),
-				AuthorLink: "http://github.com/" + os.Getenv(EnvGithubActor),
-				AuthorIcon: "http://github.com/" + os.Getenv(EnvGithubActor) + ".png?size=32",
-				Footer:     envOr(EnvSlackFooter, "<https://github.com/rtCamp/github-actions-library|Powered By rtCamp's GitHub Actions Library>"),
+				Pretext:    envOr(EnvSlackPretext, ""),
+				Footer:     envOr(EnvSlackFooter, "AEVI Slack Notification"),
 				Fields:     fields,
+				Actions:    actions,
 			},
 		},
 	}
